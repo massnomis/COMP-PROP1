@@ -1,0 +1,281 @@
+pragma solidity ^0.5.16;
+
+import "./SafeMath.sol";
+
+/**
+  * @title Logic for Compound's JumpRateModel Contract V2.
+  * @author Compound (modified by Dharma Labs, refactored by Arr00)
+  * @notice Version 2 modifies Version 1 by enabling updateable parameters.
+  */
+contract BaseJumpRateModelV2 {
+    using SafeMath for uint;
+
+    event NewInterestParams(
+        
+    uint baseRatePerBlock,
+        uint baseRatePerBlock2,
+            uint baseRatePerBlock3,
+                uint baseRatePerBlock4,
+    uint multiplierPerBlock,
+        uint multiplierPerBlock2,
+            uint multiplierPerBlock3, 
+                uint multiplierPerBlock4,
+    uint jumpMultiplierPerBlock, 
+        uint jumpMultiplierPerBlock2,
+            uint jumpMultiplierPerBlock3,
+                 uint jumpMultiplierPerBlock4,
+    uint kink,
+     uint kink2,
+      uint kink3,
+       uint kink4);
+
+    /**
+     * @notice The address of the owner, i.e. the Timelock contract, which can update parameters directly
+     */
+    address public owner;
+
+    /**
+     * @notice The approximate number of blocks per year that is assumed by the interest rate model
+     */
+    uint public constant blocksPerYear = 2102400;
+
+    /**
+     * @notice The multiplier of utilization rate that gives the slope of the interest rate
+     */
+    uint public multiplierPerBlock;
+    unit public multiplierPerBlock  = 500000000; 
+    uint public multiplierPerBlock2 = 646540;
+    uint public multiplierPerBlock3;
+    uint public multiplierPerBlock4;
+    /**
+     * @notice The base interest rate which is the y-intercept when utilization rate is 0
+     */
+    uint public baseRatePerBlock;
+    uint public baseRatePerBlock2;
+    uint public baseRatePerBlock3;
+    uint public baseRatePerBlock4;
+    /**
+     * @notice The multiplierPerBlock after hitting a specified utilization point
+     */
+    uint public jumpMultiplierPerBlock;
+    uint public jumpMultiplierPerBlock2;
+    uint public jumpMultiplierPerBlock3;
+    uint public jumpMultiplierPerBlock4;
+
+    /**
+     * @notice The utilization point at which the jump multiplier is applied
+     */
+    uint public kink;
+    unit public kink2;
+    unit public kink3;
+    unit public kink4;
+    
+
+    /**
+     * @notice Construct an interest rate model
+     * @param baseRatePerYear The approximate target base APR, as a mantissa (scaled by 1e18)
+     * @param multiplierPerYear The rate of increase in interest rate wrt utilization (scaled by 1e18)
+     * @param jumpMultiplierPerYear The multiplierPerBlock after hitting a specified utilization point
+     * @param kink_ The utilization point at which the jump multiplier is applied
+     * @param owner_ The address of the owner, i.e. the Timelock contract (which has the ability to update parameters directly)
+     */
+    constructor(
+        
+    uint baseRatePerBlock,
+        uint baseRatePerBlock2,
+            uint baseRatePerBlock3,
+                uint baseRatePerBlock4,
+    uint multiplierPerBlock,
+        uint multiplierPerBlock2,
+            uint multiplierPerBlock3, 
+                uint multiplierPerBlock4,
+    uint jumpMultiplierPerBlock, 
+        uint jumpMultiplierPerBlock2,
+            uint jumpMultiplierPerBlock3,
+                 uint jumpMultiplierPerBlock4,
+    uint kink,
+    uint kink2,
+    uint kink3,
+    uint kink4,
+    address owner_) 
+       
+       internal {
+           
+    owner = owner_;
+
+   updateJumpRateModelInternal(baseRatePerBlock,
+        baseRatePerBlock2,
+             baseRatePerBlock3,
+                 baseRatePerBlock4,
+     multiplierPerBlock,
+         multiplierPerBlock2,
+             multiplierPerBlock3, 
+                 multiplierPerBlock4,
+     jumpMultiplierPerBlock, 
+         jumpMultiplierPerBlock2,
+             jumpMultiplierPerBlock3,
+                  jumpMultiplierPerBlock4,
+     kink,
+      kink2,
+       kink3,
+        kink4);
+    }
+
+    /**
+     * @notice Update the parameters of the interest rate model (only callable by owner, i.e. Timelock)
+     * @param baseRatePerYear The approximate target base APR, as a mantissa (scaled by 1e18)
+     * @param multiplierPerYear The rate of increase in interest rate wrt utilization (scaled by 1e18)
+     * @param jumpMultiplierPerYear The multiplierPerBlock after hitting a specified utilization point
+     * @param kink_ The utilization point at which the jump multiplier is applied
+     */
+    function updateJumpRateModel(
+        
+    uint baseRatePerBlock,
+        uint baseRatePerBlock2,
+            uint baseRatePerBlock3,
+                uint baseRatePerBlock4,
+    uint multiplierPerBlock,
+        uint multiplierPerBlock2,
+            uint multiplierPerBlock3, 
+                uint multiplierPerBlock4,
+    uint jumpMultiplierPerBlock, 
+        uint jumpMultiplierPerBlock2,
+            uint jumpMultiplierPerBlock3,
+                 uint jumpMultiplierPerBlock4,
+    uint kink,
+     uint kink2,
+      uint kink3,
+       uint kink4)
+       
+       
+       
+       external {
+        require(msg.sender == owner, "only the owner may call this function.");
+
+        updateJumpRateModelInternal(baseRatePerYear, multiplierPerYear, jumpMultiplierPerYear, baseRatePerBlock,
+        baseRatePerBlock2,
+             baseRatePerBlock3,
+                 baseRatePerBlock4,
+     multiplierPerBlock,
+         multiplierPerBlock2,
+             multiplierPerBlock3, 
+                 multiplierPerBlock4,
+     jumpMultiplierPerBlock, 
+         jumpMultiplierPerBlock2,
+             jumpMultiplierPerBlock3,
+                  jumpMultiplierPerBlock4,
+     kink,
+      kink2,
+       kink3,
+        kink4);
+    }
+
+    /**
+     * @notice Calculates the utilization rate of the market: `borrows / (cash + borrows - reserves)`
+     * @param cash The amount of cash in the market
+     * @param borrows The amount of borrows in the market
+     * @param reserves The amount of reserves in the market (currently unused)
+     * @return The utilization rate as a mantissa between [0, 1e18]
+     */
+    function utilizationRate(uint cash, uint borrows, uint reserves) public pure returns (uint) {
+        // Utilization rate is 0 when there are no borrows
+        if (borrows == 0) {
+            return 0;
+        }
+
+        return borrows.mul(1e18).div(cash.add(borrows).sub(reserves));
+    }
+
+    /**
+     * @notice Calculates the current borrow rate per block, with the error code expected by the market
+     * @param cash The amount of cash in the market
+     * @param borrows The amount of borrows in the market
+     * @param reserves The amount of reserves in the market
+     * @return The borrow rate percentage per block as a mantissa (scaled by 1e18)
+     */
+    function getBorrowRateInternal(uint cash, uint borrows, uint reserves) internal view returns (uint) {
+        uint util = utilizationRate(cash, borrows, reserves);
+        
+            /**uint normalRate = kink.mul(multiplierPerBlock).div(1e18).add(baseRatePerBlock);
+            uint excessUtil = util.sub(kink);
+            return excessUtil.mul(jumpMultiplierPerBlock).div(1e18).add(normalRate);
+            */
+        if (util <= kink) {
+            return util.mul(multiplierPerBlock).div(1e18).add(baseRatePerBlock);
+        } else if (util <= kink2 && util >= kink){
+           
+         } else if (util <= kink3 && util >= kink2) {
+             
+         } else if (util <= kink4 && util >= kink3) {
+             
+         } else { 
+         /** Kink 5+
+*/
+        }
+    }
+
+    /**
+     * @notice Calculates the current supply rate per block
+     * @param cash The amount of cash in the market
+     * @param borrows The amount of borrows in the market
+     * @param reserves The amount of reserves in the market
+     * @param reserveFactorMantissa The current reserve factor for the market
+     * @return The supply rate percentage per block as a mantissa (scaled by 1e18)
+     */
+    function getSupplyRate(uint cash, uint borrows, uint reserves, uint reserveFactorMantissa) 
+    public view returns (uint) {
+        uint oneMinusReserveFactor = uint(1e18).sub(reserveFactorMantissa);
+        uint borrowRate = getBorrowRateInternal(cash, borrows, reserves);
+        uint rateToPool = borrowRate.mul(oneMinusReserveFactor).div(1e18);
+        return utilizationRate(cash, borrows, reserves).mul(rateToPool).div(1e18);
+    }
+
+    /**
+     * @notice Internal function to update the parameters of the interest rate model
+     * @param baseRatePerYear The approximate target base APR, as a mantissa (scaled by 1e18)
+     * @param multiplierPerYear The rate of increase in interest rate wrt utilization (scaled by 1e18)
+     * @param jumpMultiplierPerYear The multiplierPerBlock after hitting a specified utilization point
+     * @param kink_ The utilization point at which the jump multiplier is applied
+     */
+    function updateJumpRateModelInternal(unit baseRatePerBlock,
+        uint baseRatePerBlock2,
+            uint baseRatePerBlock3,
+                uint baseRatePerBlock4,
+    uint multiplierPerBlock,
+        uint multiplierPerBlock2,
+            uint multiplierPerBlock3, 
+                uint multiplierPerBlock4,
+    uint jumpMultiplierPerBlock, 
+        uint jumpMultiplierPerBlock2,
+            uint jumpMultiplierPerBlock3,
+                 uint jumpMultiplierPerBlock4,
+    uint kink,
+     uint kink2,
+      uint kink3,
+       uint kink4) 
+       
+       
+       internal {
+        baseRatePerBlock = baseRatePerYear.div(blocksPerYear);
+        multiplierPerBlock = (multiplierPerYear.mul(1e18)).div(blocksPerYear.mul(kink_));
+        jumpMultiplierPerBlock = jumpMultiplierPerYear.div(blocksPerYear);
+        kink = kink_;
+
+        emit NewInterestParams(baseRatePerBlock,
+        baseRatePerBlock2,
+             baseRatePerBlock3,
+                 baseRatePerBlock4,
+     multiplierPerBlock,
+         multiplierPerBlock2,
+             multiplierPerBlock3, 
+                 multiplierPerBlock4,
+     jumpMultiplierPerBlock, 
+         jumpMultiplierPerBlock2,
+             jumpMultiplierPerBlock3,
+                  jumpMultiplierPerBlock4,
+     kink,
+      kink2,
+       kink3,
+        kink4);
+    }
+}
